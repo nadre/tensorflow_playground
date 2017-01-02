@@ -7,6 +7,7 @@ import json
 import zipfile
 from six.moves import range
 from six.moves.urllib.request import urlretrieve
+import argparse
 
 import numpy as np
 import tensorflow as tf
@@ -20,19 +21,16 @@ https://github.com/wangz10/tensorflow-playground/blob/master/word2vec.py
 http://stackoverflow.com/questions/41265035/tensorflow-why-there-are-3-files-after-saving-the-model
 '''
 
-LOAD_MODEL = False
-SAVE_PATH = './data/'
-
-def main():
-	if LOAD_MODEL:
-		word2vec = Word2Vec.load(SAVE_PATH)
+def main(save_path, load_path, num_steps):
+	if save_path == None:
+		word2vec = Word2Vec.load(load_path)
 	else:
 		filename = maybe_download('text8.zip', 31344016)
 		words = read_words(filename)
 		print('Data size %d' % len(words))
 		word2vec = Word2Vec()
-		word2vec = word2vec.train(words, num_steps=3000)
-		word2vec.save(SAVE_PATH)
+		word2vec = word2vec.train(words, num_steps=num_steps)
+		word2vec.save(save_path)
 
 def maybe_download(filename, expected_bytes):
 	"""Download a file if not present, and make sure it's the right size."""
@@ -81,7 +79,7 @@ def generate_cbow_batch(data, data_index, batch_size, context_size):
 	for _ in range(span):
 		buffer.append(data[data_index])
 		data_index = (data_index + 1) % len(data)
-	middle = context_size / 2
+	middle = context_size // 2
 	for i in range(batch_size):
 		labels[i] = buffer[middle]
 		context = list(buffer)
@@ -222,14 +220,13 @@ class Word2Vec():
 			os.path.join(path, 'model.ckpt'))
 		# save parameters of the model
 		params = self.get_params()
-		json.dump(params,
-			open(os.path.join(path, 'model_params.json'), 'wb'))
 
-		# save dictionary, reverse_dictionary
+		json.dump(params,
+			open(os.path.join(path, 'model_params.json'), 'w'))
 		json.dump(self.dictionary,
-			open(os.path.join(path, 'model_dict.json'), 'wb'))
+			open(os.path.join(path, 'model_dict.json'), 'w'))
 		json.dump(self.reverse_dictionary,
-			open(os.path.join(path, 'model_rdict.json'), 'wb'))
+			open(os.path.join(path, 'model_rdict.json'), 'w'))
 
 		print("Model saved in file: %s" % save_path)
 
@@ -240,15 +237,15 @@ class Word2Vec():
 		'''
 		# load params of the model
 		path_dir = os.path.dirname(path)
-		params = json.load(open(os.path.join(path_dir, 'model_params.json'), 'rb'))
+		params = json.load(open(os.path.join(path_dir, 'model_params.json'), 'r'))
 		# init an instance of this class
 		word2vec = Word2Vec(**params)
 		word2vec._restore(os.path.join(path_dir, 'model.ckpt'))
 		# evaluate the Variable normalized_embeddings and bind to final_embeddings
 		word2vec.final_embeddings = word2vec.sess.run(word2vec.normalized_embeddings)
 		# bind dictionaries
-		word2vec.dictionary = json.load(open(os.path.join(path_dir, 'model_dict.json'), 'rb'))
-		reverse_dictionary = json.load(open(os.path.join(path_dir, 'model_rdict.json'), 'rb'))
+		word2vec.dictionary = json.load(open(os.path.join(path_dir, 'model_dict.json'), 'r'))
+		reverse_dictionary = json.load(open(os.path.join(path_dir, 'model_rdict.json'), 'r'))
 		# convert indices loaded from json back to int since json does not allow int as keys
 		word2vec.reverse_dictionary = {int(key):val for key, val in reverse_dictionary.items()}
 
@@ -256,7 +253,17 @@ class Word2Vec():
 
 	def _restore(self, path):
 		with self.graph.as_default():
+			meta_path = path+'.meta'
+			print('loading model: '+meta_path)
+			self.saver = tf.train.import_meta_graph(meta_path)
 			self.saver.restore(self.sess, path)
 
 if __name__ == '__main__':
-	main()
+	parser = argparse.ArgumentParser(description='train word2vec network')
+	parser.add_argument('-l', help='path to folder to load model from', type=str)
+	parser.add_argument('-s', help='path to folder to save model in', type=str)
+	parser.add_argument('-n', help='number of iterations', type=int, default=10000)
+	args = parser.parse_args()
+	if args.l == args.s and args.l == None:
+		raise Exception("You either need to give a path to load from or save to!")
+	main(save_path=args.s, load_path=args.l, num_steps=args.n)
