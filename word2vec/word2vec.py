@@ -23,14 +23,15 @@ http://stackoverflow.com/questions/41265035/tensorflow-why-there-are-3-files-aft
 
 def main(save_path, load_path, num_steps):
 	if save_path == None:
-		word2vec = Word2Vec.load(load_path)
+		_word2vec = Word2Vec.load(load_path)
 	else:
 		filename = maybe_download('text8.zip', 31344016)
 		words = read_words(filename)
 		print('Data size %d' % len(words))
-		word2vec = Word2Vec()
-		word2vec = word2vec.train(words, num_steps=num_steps)
-		word2vec.save(save_path)
+		_word2vec = Word2Vec()
+		_word2vec = _word2vec.train(words, num_steps=num_steps)
+		_word2vec.save(save_path)
+	return _word2vec
 
 def maybe_download(filename, expected_bytes):
 	"""Download a file if not present, and make sure it's the right size."""
@@ -196,21 +197,25 @@ class Word2Vec():
 				# The average loss is an estimate of the loss over the last 2000 batches.
 				print('Average loss at step %d: %f' % (step, average_loss))
 				average_loss = 0
+
 			# note that this is expensive (~20% slowdown if computed every 500 steps)
 			if step % 2000 == 0:
-				sim = self.similarity.eval(session=self.sess)
-				for i in range(self.valid_size):
-					valid_word = self.reverse_dictionary[self.valid_examples[i]]
-					top_k = 8 # number of nearest neighbors
-					nearest = (-sim[i, :]).argsort()[1:top_k+1]
-					log = 'Nearest to %s:' % valid_word
-					for k in range(top_k):
-						close_word = self.reverse_dictionary[nearest[k]]
-						log = '%s %s,' % (log, close_word)
-					print(log)
+				self.evaluate()
+
 
 		self.final_embeddings = self.sess.run(self.normalized_embeddings)
 		return self
+
+	def evaluate(self, top_k=5):
+		sim = self.similarity.eval(session=self.sess)
+		for i in range(self.valid_size):
+			valid_word = self.reverse_dictionary[self.valid_examples[i]]
+			nearest = (-sim[i, :]).argsort()[1:top_k+1]
+			log = 'Nearest to %s:' % valid_word
+			for k in range(top_k):
+				close_word = self.reverse_dictionary[nearest[k]]
+				log = '%s %s,' % (log, close_word)
+			print(log)
 
 	def save(self, path):
 		'''
