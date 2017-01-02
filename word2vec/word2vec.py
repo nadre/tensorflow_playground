@@ -11,13 +11,28 @@ from six.moves.urllib.request import urlretrieve
 import numpy as np
 import tensorflow as tf
 
-def main():
-	filename = maybe_download('text8.zip', 31344016)
-	words = read_words(filename)
-	print('Data size %d' % len(words))
+'''
+tensorflow word2vec example
+@author: Erdan Genc
+@references:
+https://github.com/tensorflow/tensorflow/blob/master/tensorflow/examples/udacity/5_word2vec.ipynb
+https://github.com/wangz10/tensorflow-playground/blob/master/word2vec.py
+http://stackoverflow.com/questions/41265035/tensorflow-why-there-are-3-files-after-saving-the-model
+'''
 
-	word2vec = Word2Vec()
-	word2vec.train(words)
+LOAD_MODEL = False
+SAVE_PATH = './data/'
+
+def main():
+	if LOAD_MODEL:
+		word2vec = Word2Vec.load(SAVE_PATH)
+	else:
+		filename = maybe_download('text8.zip', 31344016)
+		words = read_words(filename)
+		print('Data size %d' % len(words))
+		word2vec = Word2Vec()
+		word2vec = word2vec.train(words, num_steps=3000)
+		word2vec.save(SAVE_PATH)
 
 def maybe_download(filename, expected_bytes):
 	"""Download a file if not present, and make sure it's the right size."""
@@ -55,8 +70,8 @@ def build_dataset(words, vocabulary_size=50000):
 			unk_count = unk_count + 1
 		data.append(index)
 		count[0][1] = unk_count
-  	reverse_dictionary = dict(zip(dictionary.values(), dictionary.keys()))
-  	return data, count, dictionary, reverse_dictionary
+	reverse_dictionary = dict(zip(dictionary.values(), dictionary.keys()))
+	return data, count, dictionary, reverse_dictionary
 
 def generate_cbow_batch(data, data_index, batch_size, context_size):
 	batch = np.ndarray(shape=(batch_size, context_size), dtype=np.int32)
@@ -84,7 +99,8 @@ class Word2Vec():
 		valid_size=16, 		# Random set of words to evaluate similarity on.
 		valid_window=100,	# Only pick dev samples in the head of the distribution.
 		num_sampled=64,		# Number of negative examples to sample.
-		vocabulary_size=50000
+		vocabulary_size=50000,
+		data_index = 0
 	):
 		self.batch_size = batch_size
 		self.embedding_size = embedding_size
@@ -94,10 +110,23 @@ class Word2Vec():
 		self.num_sampled = num_sampled
 		self.vocabulary_size = vocabulary_size
 
-		self.data_index = 0
+		self.data_index = data_index
 
 		self._init_graph()
 		self.sess = tf.Session(graph=self.graph)
+
+	def get_params(self):
+		params = {
+			'batch_size' : self.batch_size,
+			'embedding_size' : self.embedding_size,
+			'context_size' : self.context_size,
+			'valid_size' : self.valid_size,
+			'valid_window' : self.valid_window,
+			'num_sampled' : self.num_sampled,
+			'vocabulary_size' : self.vocabulary_size,
+			'data_index' : self.data_index
+		}
+		return params
 
 	def _init_graph(self):
 		self.valid_examples = np.array(random.sample(range(self.valid_window), self.valid_size))
@@ -184,6 +213,50 @@ class Word2Vec():
 
 		self.final_embeddings = self.sess.run(self.normalized_embeddings)
 		return self
+
+	def save(self, path):
+		'''
+		To save trained model and its params.
+		'''
+		save_path = self.saver.save(self.sess,
+			os.path.join(path, 'model.ckpt'))
+		# save parameters of the model
+		params = self.get_params()
+		json.dump(params,
+			open(os.path.join(path, 'model_params.json'), 'wb'))
+
+		# save dictionary, reverse_dictionary
+		json.dump(self.dictionary,
+			open(os.path.join(path, 'model_dict.json'), 'wb'))
+		json.dump(self.reverse_dictionary,
+			open(os.path.join(path, 'model_rdict.json'), 'wb'))
+
+		print("Model saved in file: %s" % save_path)
+
+	@classmethod
+	def load(cls, path):
+		'''
+		To restore a saved model.
+		'''
+		# load params of the model
+		path_dir = os.path.dirname(path)
+		params = json.load(open(os.path.join(path_dir, 'model_params.json'), 'rb'))
+		# init an instance of this class
+		word2vec = Word2Vec(**params)
+		word2vec._restore(os.path.join(path_dir, 'model.ckpt'))
+		# evaluate the Variable normalized_embeddings and bind to final_embeddings
+		word2vec.final_embeddings = word2vec.sess.run(word2vec.normalized_embeddings)
+		# bind dictionaries
+		word2vec.dictionary = json.load(open(os.path.join(path_dir, 'model_dict.json'), 'rb'))
+		reverse_dictionary = json.load(open(os.path.join(path_dir, 'model_rdict.json'), 'rb'))
+		# convert indices loaded from json back to int since json does not allow int as keys
+		word2vec.reverse_dictionary = {int(key):val for key, val in reverse_dictionary.items()}
+
+		return word2vec
+
+	def _restore(self, path):
+		with self.graph.as_default():
+			self.saver.restore(self.sess, path)
 
 if __name__ == '__main__':
 	main()
