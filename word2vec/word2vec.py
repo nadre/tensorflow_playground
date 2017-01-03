@@ -144,7 +144,12 @@ class Word2Vec:
     self.data_index = data_index
 
     self._init_graph()
-    self.sess = tf.Session(graph=self.graph)
+
+    # Tells tensorflow not to allocate all the GPU memory there is
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth=True
+
+    self.sess = tf.Session(graph=self.graph, config=config)
 
   def get_params(self):
     params = {
