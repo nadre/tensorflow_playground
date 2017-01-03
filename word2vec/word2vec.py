@@ -255,6 +255,7 @@ class Word2Vec:
 
   @timed
   def train(self, words):
+    start_time = time()
     self.data, self.count, self.dictionary, self.reverse_dictionary = build_dataset(words)
     del words
     print('Most common words (+UNK)', self.count[:5])
@@ -288,6 +289,9 @@ class Word2Vec:
       if step % self.checkpoint_steps == 0:
         self.save_model()
         self.evaluate()
+        elapsed_time = (time() - start_time) / 60
+        progress = (step / self.num_steps) * 100
+        print( "## Elapsed time: %2.2f min; Progress : %3.2f%" % (elapsed_time, progress) )
 
 
     self.final_embeddings = self.sess.run(self.normalized_embeddings)
