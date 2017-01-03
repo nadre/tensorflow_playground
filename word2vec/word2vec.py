@@ -11,6 +11,7 @@ import argparse
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.contrib.tensorboard.plugins import projector
 
 from functools import wraps
 from time import time
@@ -25,17 +26,17 @@ http://stackoverflow.com/questions/41265035/tensorflow-why-there-are-3-files-aft
 '''
 
 
-def main(save_path, load_path, num_steps):
-  if save_path == None:
+def main(load_path=None):
+  if load_path != None:
     _word2vec = Word2Vec.load(load_path)
     _word2vec.evaluate()
   else:
     filename = maybe_download('text8.zip', 31344016)
     words = read_words(filename)
     print('Data size %d' % len(words))
-    _word2vec = Word2Vec(num_steps=num_steps, save_path=save_path)
-    _word2vec = _word2vec.train(words)
-    _word2vec.save_all(save_path)
+    _word2vec = Word2Vec(words)
+    _word2vec = _word2vec.train()
+    _word2vec.save_all()
   return _word2vec
 
 def timed(f):
@@ -67,6 +68,12 @@ def read_words(filename):
   with zipfile.ZipFile(filename) as f:
     words = tf.compat.as_str(f.read(f.namelist()[0])).split()
   return words
+
+@timed
+def dictionary_to_vocab_file(dictionary, file_path):
+  print("Writing vocab.")
+  with open(file_path, 'w') as f:
+    f.writelines('{0}\n'.format(k) for k in dictionary.keys())
 
 @timed
 def build_dataset(words, vocabulary_size=50000):
@@ -109,6 +116,7 @@ def generate_cbow_batch(data, data_index, batch_size, context_size):
 
 class Word2Vec:
   def __init__(self,
+               words,
                num_steps=1000000, 	# Iterate over n batches
                batch_size=128,
                embedding_size=128, # Dimension of the embedding vector.
@@ -123,7 +131,7 @@ class Word2Vec:
                learning_decay=0.999,    # Amount of decay 0.95 -> 5% decay
                checkpoint_steps=10000,	# Save model after n steps
                save_path='checkpoints/', # Folder to save data in
-               log_path='logs/',	     # Folder to save logs in
+               log_path='checkpoints/',	 # Folder to save logs in
                data_index = 0
                ):
 
@@ -152,6 +160,14 @@ class Word2Vec:
     self.log_path = log_path
 
     self.data_index = data_index
+
+    self.data, self.count, self.dictionary, self.reverse_dictionary = build_dataset(words)
+    del words
+    print('Most common words (+UNK)', self.count[:5])
+    print('Sample data', self.data[:10])
+
+    # This is where tensorboard takes the labels for the embedding visu
+    dictionary_to_vocab_file(self.dictionary ,os.path.join(self.log_path, 'dictionary.vocab'))
 
     self._init_graph()
 
@@ -250,16 +266,21 @@ class Word2Vec:
       self.summary_op = tf.summary.merge_all()
       self.summary_writer = tf.summary.FileWriter(self.log_path, self.graph)
 
+      # Format: tensorflow/contrib/tensorboard/plugins/projector/projector_config.proto
+      projector_config = projector.ProjectorConfig()
+      embedding = projector_config.embeddings.add()
+      embedding.tensor_name = self.normalized_embeddings.name
+      embedding.metadata_path = os.path.join(self.log_path, 'dictionary.vocab')
+
+      # Saves a projector_configuration file that TensorBoard will read during startup.
+      projector.visualize_embeddings(self.summary_writer, projector_config)
+
       # init op
       self.init_op = tf.global_variables_initializer()
 
   @timed
-  def train(self, words):
+  def train(self):
     start_time = time()
-    self.data, self.count, self.dictionary, self.reverse_dictionary = build_dataset(words)
-    del words
-    print('Most common words (+UNK)', self.count[:5])
-    print('Sample data', self.data[:10])
 
     # Save params once at the beginning of training
     self.save_params()
@@ -290,8 +311,8 @@ class Word2Vec:
         self.save_model()
         self.evaluate()
         elapsed_time = (time() - start_time) / 60
-        progress = (step / self.num_steps) * 100
-        print( "## Elapsed time: %2.2f min; Progress : %3.2f%" % (elapsed_time, progress) )
+        progress = (float(step) / self.num_steps) * 100
+        print( "## Elapsed time: %2.2f min; Progress : %3.2f" % (elapsed_time, progress) )
 
 
     self.final_embeddings = self.sess.run(self.normalized_embeddings)
@@ -387,9 +408,5 @@ class Word2Vec:
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='train word2vec network')
   parser.add_argument('-l', help='path to folder to load model from', type=str)
-  parser.add_argument('-s', help='path to folder to save model in', type=str)
-  parser.add_argument('-n', help='number of iterations', type=int, default=10000)
   args = parser.parse_args()
-  if args.l == args.s and args.l == None:
-    raise Exception("You either need to give a path to load from or save to!")
-  main(save_path=args.s, load_path=args.l, num_steps=args.n)
+  main(load_path=args.l)
