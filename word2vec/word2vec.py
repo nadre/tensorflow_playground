@@ -12,6 +12,9 @@ import argparse
 import numpy as np
 import tensorflow as tf
 
+from functools import wraps
+from time import time
+
 '''
 tensorflow word2vec example
 @author: Erdan Genc
@@ -25,6 +28,7 @@ http://stackoverflow.com/questions/41265035/tensorflow-why-there-are-3-files-aft
 def main(save_path, load_path, num_steps):
   if save_path == None:
     _word2vec = Word2Vec.load(load_path)
+    _word2vec.evaluate()
   else:
     filename = maybe_download('text8.zip', 31344016)
     words = read_words(filename)
@@ -34,6 +38,15 @@ def main(save_path, load_path, num_steps):
     _word2vec.save_all(save_path)
   return _word2vec
 
+def timed(f):
+  @wraps(f)
+  def wrapper(*args, **kwds):
+    start = time()
+    result = f(*args, **kwds)
+    elapsed = time() - start
+    print "%s took %d sec to finish" % (f.__name__, elapsed)
+    return result
+  return wrapper
 
 def maybe_download(filename, expected_bytes):
   """Download a file if not present, and make sure it's the right size."""
@@ -49,14 +62,13 @@ def maybe_download(filename, expected_bytes):
       'Failed to verify ' + filename + '. Can you get to it with a browser?')
   return filename
 
-
 def read_words(filename):
   """Extract the first file enclosed in a zip file as a list of words"""
   with zipfile.ZipFile(filename) as f:
     words = tf.compat.as_str(f.read(f.namelist()[0])).split()
   return words
 
-
+@timed
 def build_dataset(words, vocabulary_size=50000):
   count = [['UNK', -1]]
   count.extend(collections.Counter(words).most_common(vocabulary_size - 1))
@@ -75,7 +87,6 @@ def build_dataset(words, vocabulary_size=50000):
     count[0][1] = unk_count
   reverse_dictionary = dict(zip(dictionary.values(), dictionary.keys()))
   return data, count, dictionary, reverse_dictionary
-
 
 def generate_cbow_batch(data, data_index, batch_size, context_size):
   batch = np.ndarray(shape=(batch_size, context_size), dtype=np.int32)
@@ -155,6 +166,7 @@ class Word2Vec:
     }
     return params
 
+  @timed
   def _init_graph(self):
     self.valid_examples = np.array(random.sample(range(self.valid_window), self.valid_size))
     self.graph = tf.Graph()
@@ -216,6 +228,7 @@ class Word2Vec:
       # create a saver
       self.saver = tf.train.Saver()
 
+  @timed
   def train(self, words):
     self.data, self.count, self.dictionary, self.reverse_dictionary = build_dataset(words)
     del words
@@ -240,7 +253,7 @@ class Word2Vec:
         # The average loss is an estimate of the loss over the last 2000 batches.
         print('############################')
         print('Average loss at step %d: %f' % (step, average_loss))
-        #print('Current learningrate: %f' % (tf.to_float(self.tf_learning_rate)))
+        #print('Current learningrate: %f' % (tf.unpack(self.tf_learning_rate)))
         average_loss = 0
 
       # note that this is expensive (~20% slowdown if computed every 500 steps)
@@ -252,6 +265,7 @@ class Word2Vec:
     self.final_embeddings = self.sess.run(self.normalized_embeddings)
     return self
 
+  @timed
   def evaluate(self, top_k=5):
     sim = self.similarity.eval(session=self.sess)
     for i in range(self.valid_size):
@@ -263,6 +277,7 @@ class Word2Vec:
         log = '%s %s,' % (log, close_word)
       print(log)
 
+  @timed
   def save_model(self, path=None):
     if path == None:
       path = self.save_path
