@@ -99,7 +99,10 @@ class Word2Vec():
 		valid_size=16, 		# Random set of words to evaluate similarity on.
 		valid_window=100,	# Only pick dev samples in the head of the distribution.
 		num_sampled=64,		# Number of negative examples to sample.
-		vocabulary_size=50000,
+		vocabulary_size=50000, # Use the n most common words
+		learning_rate=1.0, 	   # Learning rate to start with
+		learning_decay_steps=1000,  # Decay after n steps
+		learning_decay=0.95,   # Amount of decay 0.95 -> 5% decay
 		data_index = 0
 	):
 		assert context_size == len(context_weights)
@@ -111,6 +114,9 @@ class Word2Vec():
 		self.valid_window = valid_window
 		self.num_sampled = num_sampled
 		self.vocabulary_size = vocabulary_size
+		self.learning_rate = learning_rate
+		self.learning_decay_steps = learning_decay_steps
+		self.learning_decay = learning_decay
 
 		self.data_index = data_index
 
@@ -127,6 +133,9 @@ class Word2Vec():
 			'valid_window' : self.valid_window,
 			'num_sampled' : self.num_sampled,
 			'vocabulary_size' : self.vocabulary_size,
+			'learning_rate' : self.learning_rate,
+			'learning_decay_steps' : self.learning_decay_steps,
+			'learning_decay' : self.learning_decay,
 			'data_index' : self.data_index
 		}
 		return params
@@ -161,15 +170,23 @@ class Word2Vec():
 
 			# Compute the softmax loss, using a sample of the negative labels each time.
 			self.loss = tf.reduce_mean(
-			tf.nn.sampled_softmax_loss(self.softmax_weights, self.softmax_biases, self.embed,
-									   self.train_labels, self.num_sampled, self.vocabulary_size))
+			tf.nn.sampled_softmax_loss(self.softmax_weights, self.softmax_biases,
+									   self.embed, self.train_labels,
+									   self.num_sampled, self.vocabulary_size))
+
+			self.global_step = tf.Variable(0, name="global_step")  # count the number of steps taken
+			self.learning_rate = tf.train.exponential_decay(
+								self.learning_rate, self.global_step,
+                                self.learning_decay_steps, self.learning_decay,
+                                staircase=True)
+
 			# Optimizer.
 			# Note: The optimizer will optimize the softmax_weights AND the embeddings.
 			# This is because the embeddings are defined as a variable quantity and the
 			# optimizer's `minimize` method will by default modify all variable quantities
 			# that contribute to the tensor it is passed.
 			# See docs on `tf.train.Optimizer.minimize()` for more details.
-			self.optimizer = tf.train.AdagradOptimizer(1.0).minimize(self.loss)
+			self.optimizer = tf.train.AdagradOptimizer(self.learning_rate).minimize(self.loss, self.global_step)
 
 			# Compute the similarity between minibatch examples and all embeddings.
 			# We use the cosine distance:
