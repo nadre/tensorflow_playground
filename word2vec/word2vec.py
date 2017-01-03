@@ -44,7 +44,7 @@ def timed(f):
     start = time()
     result = f(*args, **kwds)
     elapsed = time() - start
-    print "%s took %d sec to finish" % (f.__name__, elapsed)
+    print("TIME : %s took %d sec to finish" % (f.__name__, elapsed))
     return result
   return wrapper
 
@@ -119,13 +119,22 @@ class Word2Vec:
                num_sampled=64,		# Number of negative examples to sample.
                vocabulary_size=50000,  # Use the n most common words
                learning_rate=1.0, 	    # Learning rate to start with
-               learning_decay_steps=1000,  # Decay after n steps
-               learning_decay=0.98,    # Amount of decay 0.95 -> 5% decay
+               learning_decay_steps=5000,  # Decay after n steps
+               learning_decay=0.999,    # Amount of decay 0.95 -> 5% decay
                checkpoint_steps=10000,	# Save model after n steps
-               save_path='checkpoints/',	# Folder to save data in
+               save_path='checkpoints/', # Folder to save data in
+               log_path='logs/',	     # Folder to save logs in
                data_index = 0
                ):
+
     assert context_size == len(context_weights)
+
+    #remove old logs
+    if tf.gfile.Exists(log_path):
+      print('Deleting old logs in: %s'%(log_path))
+      tf.gfile.DeleteRecursively(log_path)
+    tf.gfile.MakeDirs(log_path)
+
     self.num_steps = num_steps
     self.batch_size = batch_size
     self.embedding_size = embedding_size
@@ -140,6 +149,7 @@ class Word2Vec:
     self.learning_decay = learning_decay
     self.checkpoint_steps = checkpoint_steps
     self.save_path = save_path
+    self.log_path = log_path
 
     self.data_index = data_index
 
@@ -167,6 +177,7 @@ class Word2Vec:
       'learning_decay' : self.learning_decay,
       'checkpoint_steps' : self.checkpoint_steps,
       'save_path' : self.save_path,
+      'log_path' : self.log_path,
       'data_index' : self.data_index
     }
     return params
@@ -198,19 +209,22 @@ class Word2Vec:
       embed = tf.zeros([self.batch_size, self.embedding_size])
       for i in range(self.context_size):
         embed += tf.nn.embedding_lookup(self.embeddings, self.train_dataset[:, i])
-      self.embed = embed / self.context_size
+      # self.embed = embed / self.context_size
+      self.embed = tf.nn.l2_normalize(embed, 1)
 
       # Compute the softmax loss, using a sample of the negative labels each time.
       self.loss = tf.reduce_mean(
         tf.nn.sampled_softmax_loss(self.softmax_weights, self.softmax_biases,
                                    self.embed, self.train_labels,
                                    self.num_sampled, self.vocabulary_size))
+      tf.summary.scalar('loss', self.loss)
 
       self.global_step = tf.Variable(0, name="global_step")  # count the number of steps taken
       self.tf_learning_rate = tf.train.exponential_decay(
         self.learning_rate, self.global_step,
         self.learning_decay_steps, self.learning_decay,
         staircase=True)
+      tf.summary.scalar('learning_rate', self.tf_learning_rate)
 
       # Optimizer.
       # Note: The optimizer will optimize the softmax_weights AND the embeddings.
@@ -223,15 +237,21 @@ class Word2Vec:
       # Compute the similarity between minibatch examples and all embeddings.
       # We use the cosine distance:
       norm = tf.sqrt(tf.reduce_sum(tf.square(self.embeddings), 1, keep_dims=True))
+
       self.normalized_embeddings = self.embeddings / norm
       self.valid_embeddings = tf.nn.embedding_lookup(self.normalized_embeddings, self.valid_dataset)
-      self.similarity = tf.matmul(self.valid_embeddings, tf.transpose(self.normalized_embeddings))
 
-      # init op
-      self.init_op = tf.global_variables_initializer()
+      self.similarity = tf.matmul(self.valid_embeddings, tf.transpose(self.normalized_embeddings))
 
       # create a saver
       self.saver = tf.train.Saver()
+
+      # create summary writers for tensorboard
+      self.summary_op = tf.summary.merge_all()
+      self.summary_writer = tf.summary.FileWriter(self.log_path, self.graph)
+
+      # init op
+      self.init_op = tf.global_variables_initializer()
 
   @timed
   def train(self, words):
@@ -243,21 +263,24 @@ class Word2Vec:
     # Save params once at the beginning of training
     self.save_params()
 
+    # Init variables
     self.sess.run(self.init_op)
+
     average_loss = 0
     for step in range(self.num_steps):
       batch_data, batch_labels, new_data_index = generate_cbow_batch(self.data, self.data_index,
                                                                      self.batch_size, self.context_size)
       self.data_index = new_data_index
       feed_dict = {self.train_dataset : batch_data, self.train_labels : batch_labels}
-      _, l = self.sess.run([self.optimizer, self.loss], feed_dict=feed_dict)
+      _, l, summary = self.sess.run([self.optimizer, self.loss, self.summary_op], feed_dict=feed_dict)
       average_loss += l
-      if step % 2000 == 0:
+      if step % 500 == 0:
         if step > 0:
           average_loss = average_loss / 2000
+          tf.summary.scalar('average_loss', average_loss)
+          self.summary_writer.add_summary(summary, step)
         # The average loss is an estimate of the loss over the last 2000 batches.
-        print('############################')
-        print('Average loss at step %d: %f' % (step, average_loss))
+        print('## Average loss at step %d: %f' % (step, average_loss))
         #print('Current learningrate: %f' % (tf.unpack(self.tf_learning_rate)))
         average_loss = 0
 
