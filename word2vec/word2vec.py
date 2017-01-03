@@ -28,9 +28,9 @@ def main(save_path, load_path, num_steps):
 		filename = maybe_download('text8.zip', 31344016)
 		words = read_words(filename)
 		print('Data size %d' % len(words))
-		_word2vec = Word2Vec()
-		_word2vec = _word2vec.train(words, num_steps=num_steps)
-		_word2vec.save(save_path)
+		_word2vec = Word2Vec(num_steps=num_steps, save_path=save_path)
+		_word2vec = _word2vec.train(words)
+		_word2vec.save_all(save_path)
 	return _word2vec
 
 def maybe_download(filename, expected_bytes):
@@ -92,6 +92,7 @@ def generate_cbow_batch(data, data_index, batch_size, context_size):
 
 class Word2Vec():
 	def __init__(self,
+		num_steps=1000000, 	# Iterate over n batches
 		batch_size=128,
 		embedding_size=128, # Dimension of the embedding vector.
 		context_size=8, 	# How many words to consider left and right.
@@ -99,13 +100,16 @@ class Word2Vec():
 		valid_size=16, 		# Random set of words to evaluate similarity on.
 		valid_window=100,	# Only pick dev samples in the head of the distribution.
 		num_sampled=64,		# Number of negative examples to sample.
-		vocabulary_size=50000, # Use the n most common words
-		learning_rate=1.0, 	   # Learning rate to start with
+		vocabulary_size=50000,  # Use the n most common words
+		learning_rate=1.0, 	    # Learning rate to start with
 		learning_decay_steps=1000,  # Decay after n steps
-		learning_decay=0.95,   # Amount of decay 0.95 -> 5% decay
+		learning_decay=0.98,    # Amount of decay 0.95 -> 5% decay
+		checkpoint_steps=10000,	# Save model after n steps
+		save_path='checkpoints/',	# Folder to save data in
 		data_index = 0
 	):
 		assert context_size == len(context_weights)
+		self.num_steps = num_steps
 		self.batch_size = batch_size
 		self.embedding_size = embedding_size
 		self.context_size = context_size
@@ -117,6 +121,8 @@ class Word2Vec():
 		self.learning_rate = learning_rate
 		self.learning_decay_steps = learning_decay_steps
 		self.learning_decay = learning_decay
+		self.checkpoint_steps = checkpoint_steps
+		self.save_path = save_path
 
 		self.data_index = data_index
 
@@ -125,6 +131,7 @@ class Word2Vec():
 
 	def get_params(self):
 		params = {
+			'num_steps' : self.num_steps,
 			'batch_size' : self.batch_size,
 			'embedding_size' : self.embedding_size,
 			'context_size' : self.context_size,
@@ -136,6 +143,8 @@ class Word2Vec():
 			'learning_rate' : self.learning_rate,
 			'learning_decay_steps' : self.learning_decay_steps,
 			'learning_decay' : self.learning_decay,
+			'checkpoint_steps' : self.checkpoint_steps,
+			'save_path' : self.save_path,
 			'data_index' : self.data_index
 		}
 		return params
@@ -175,7 +184,7 @@ class Word2Vec():
 									   self.num_sampled, self.vocabulary_size))
 
 			self.global_step = tf.Variable(0, name="global_step")  # count the number of steps taken
-			self.learning_rate = tf.train.exponential_decay(
+			self.tf_learning_rate = tf.train.exponential_decay(
 								self.learning_rate, self.global_step,
                                 self.learning_decay_steps, self.learning_decay,
                                 staircase=True)
@@ -186,7 +195,7 @@ class Word2Vec():
 			# optimizer's `minimize` method will by default modify all variable quantities
 			# that contribute to the tensor it is passed.
 			# See docs on `tf.train.Optimizer.minimize()` for more details.
-			self.optimizer = tf.train.AdagradOptimizer(self.learning_rate).minimize(self.loss, self.global_step)
+			self.optimizer = tf.train.AdagradOptimizer(self.tf_learning_rate).minimize(self.loss, self.global_step)
 
 			# Compute the similarity between minibatch examples and all embeddings.
 			# We use the cosine distance:
@@ -201,15 +210,18 @@ class Word2Vec():
 			# create a saver
 			self.saver = tf.train.Saver()
 
-	def train(self, words, num_steps=100001):
+	def train(self, words):
 		self.data, self.count, self.dictionary, self.reverse_dictionary = build_dataset(words)
 		del words
 		print('Most common words (+UNK)', self.count[:5])
 		print('Sample data', self.data[:10])
 
+		# Save params once at the beginning of training
+		self.save_params()
+
 		self.sess.run(self.init_op)
 		average_loss = 0
-		for step in range(num_steps):
+		for step in range(self.num_steps):
 			batch_data, batch_labels, new_data_index = generate_cbow_batch(self.data, self.data_index,
 													self.batch_size, self.context_size)
 			self.data_index = new_data_index
@@ -220,11 +232,14 @@ class Word2Vec():
 				if step > 0:
 					average_loss = average_loss / 2000
 				# The average loss is an estimate of the loss over the last 2000 batches.
+				print('############################')
 				print('Average loss at step %d: %f' % (step, average_loss))
+				#print('Current learningrate: %f' % (tf.to_float(self.tf_learning_rate)))
 				average_loss = 0
 
 			# note that this is expensive (~20% slowdown if computed every 500 steps)
-			if step % 2000 == 0:
+			if step % self.checkpoint_steps == 0:
+				self.save_model()
 				self.evaluate()
 
 
@@ -242,23 +257,51 @@ class Word2Vec():
 				log = '%s %s,' % (log, close_word)
 			print(log)
 
-	def save(self, path):
-		'''
-		To save trained model and its params.
-		'''
-		save_path = self.saver.save(self.sess,
+	def save_model(self, path=None):
+		if path == None:
+			path = self.save_path
+		self.saver.save(self.sess,
 			os.path.join(path, 'model.ckpt'))
-		# save parameters of the model
-		params = self.get_params()
+		print("Model has been saved")
 
+	#currently not used
+	def save_data_and_labels(self, path=None):
+		if path == None:
+			path = self.save_path
+		json.dump(self.data,
+			open(os.path.join(path, 'data.json'), 'w'))
+		json.dump(self.count,
+			open(os.path.join(path, 'count.json'), 'w'))
+
+	def save_params(self, path=None):
+		if path == None:
+			path = self.save_path
+		params = self.get_params()
 		json.dump(params,
 			open(os.path.join(path, 'model_params.json'), 'w'))
 		json.dump(self.dictionary,
 			open(os.path.join(path, 'model_dict.json'), 'w'))
 		json.dump(self.reverse_dictionary,
 			open(os.path.join(path, 'model_rdict.json'), 'w'))
+		print("Params and dictionaries have been saved")
 
-		print("Model saved in file: %s" % save_path)
+	def save_all(self, path=None):
+		'''
+		To save trained model and its params.
+		'''
+		if path == None:
+			path = self.save_path
+
+		# save the model (tensorflow)
+		self.save_model(path)
+
+		# save parameters of the model
+		self.save_params(path)
+
+		# save training data and labels
+		# self.save_data_and_labels(path)
+
+		print("Everything got saved in : %s" % save_path)
 
 	@classmethod
 	def load(cls, path):
