@@ -94,16 +94,19 @@ class Word2Vec():
 	def __init__(self,
 		batch_size=128,
 		embedding_size=128, # Dimension of the embedding vector.
-		context_size=6, 	# How many words to consider left and right.
+		context_size=8, 	# How many words to consider left and right.
+		context_weights=[1,2,3,4,4,3,2,1], # Weights of the considered words
 		valid_size=16, 		# Random set of words to evaluate similarity on.
 		valid_window=100,	# Only pick dev samples in the head of the distribution.
 		num_sampled=64,		# Number of negative examples to sample.
 		vocabulary_size=50000,
 		data_index = 0
 	):
+		assert context_size == len(context_weights)
 		self.batch_size = batch_size
 		self.embedding_size = embedding_size
 		self.context_size = context_size
+		self.context_weights = context_weights
 		self.valid_size = valid_size
 		self.valid_window = valid_window
 		self.num_sampled = num_sampled
@@ -119,6 +122,7 @@ class Word2Vec():
 			'batch_size' : self.batch_size,
 			'embedding_size' : self.embedding_size,
 			'context_size' : self.context_size,
+			'context_weights' : self.context_weights,
 			'valid_size' : self.valid_size,
 			'valid_window' : self.valid_window,
 			'num_sampled' : self.num_sampled,
@@ -143,6 +147,10 @@ class Word2Vec():
 				tf.truncated_normal([self.vocabulary_size, self.embedding_size],
 								 stddev=1.0 / math.sqrt(self.embedding_size)))
 			self.softmax_biases = tf.Variable(tf.zeros([self.vocabulary_size]))
+
+			# Apply weights to the context words in the training data
+			# Idea: Give more weight to words that are closer to the center
+			self.train_dataset = self.train_dataset * self.context_weights
 
 			# Model.
 			# Look up embeddings for inputs.
