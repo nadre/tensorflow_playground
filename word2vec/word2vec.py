@@ -269,7 +269,7 @@ class Word2Vec:
       # Format: tensorflow/contrib/tensorboard/plugins/projector/projector_config.proto
       projector_config = projector.ProjectorConfig()
       embedding = projector_config.embeddings.add()
-      embedding.tensor_name = self.normalized_embeddings.name
+      embedding.tensor_name = self.embeddings.name
       embedding.metadata_path = os.path.join(self.log_path, 'dictionary.vocab')
 
       # Saves a projector_configuration file that TensorBoard will read during startup.
