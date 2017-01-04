@@ -161,7 +161,8 @@ class Word2Vec:
 
     self.data_index = data_index
 
-    self.data, self.count, self.dictionary, self.reverse_dictionary = build_dataset(words)
+    (self.data, self.count,
+     self.dictionary, self.reverse_dictionary) = build_dataset(words, self.vocabulary_size)
     del words
     print('Most common words (+UNK)', self.count[:5])
     print('Sample data', self.data[:10])
@@ -407,6 +408,6 @@ class Word2Vec:
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='train word2vec network')
-  parser.add_argument('-l', help='path to folder to load model from', type=str)
+  parser.add_argument('-dir', help='path to folder to load model from', type=str)
   args = parser.parse_args()
   main(load_path=args.l)
