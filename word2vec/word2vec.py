@@ -177,6 +177,8 @@ class Word2Vec:
     # Tells tensorflow not to allocate all the GPU memory there is
     config = tf.ConfigProto()
     config.gpu_options.allow_growth=True
+    config.log_device_placement=True
+    config.allow_soft_placement=True
 
     self.sess = tf.Session(graph=self.graph, config=config)
 
@@ -205,7 +207,7 @@ class Word2Vec:
     self.valid_examples = np.array(random.sample(range(self.valid_window), self.valid_size))
     self.graph = tf.Graph()
 
-    with self.graph.as_default():
+    with self.graph.as_default(), tf.device('/gpu:0'):
       with tf.name_scope('input_data'):
         self.train_dataset = tf.placeholder(tf.int32,
                              shape=[self.batch_size, self.context_size],
