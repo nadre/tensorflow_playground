@@ -27,17 +27,16 @@ http://stackoverflow.com/questions/41265035/tensorflow-why-there-are-3-files-aft
 
 
 def main(args):
-  args_pretty_string = json.dumps(vars(args), indent=4, sort_keys=True)
-  print("learning word2vec with following parameters:")
-  print(args_pretty_string)
   if args.load_embeddings == True:
     _word2vec = Word2Vec.load(args.data_dir)
     _word2vec.evaluate()
   else:
+    args = vars(args)
+    del args['load_embeddings']
     filename = maybe_download('text8.zip', 31344016)
     words = read_words(filename)
     print('Data size %d' % len(words))
-    _word2vec = Word2Vec(words)
+    _word2vec = Word2Vec(words, **args)
     _word2vec = _word2vec.train()
     _word2vec.save_all()
   return _word2vec
@@ -73,10 +72,10 @@ def read_words(filename):
   return words
 
 @timed
-def dictionary_to_vocab_file(dictionary, file_path):
-  print("Writing vocab.")
+def rev_dictionary_to_vocab_file(rdict, file_path):
+  print("Writing vocab file.")
   with open(file_path, 'w') as f:
-    f.writelines('{0}\n'.format(k) for k in dictionary.keys())
+    f.writelines('{0}\n'.format(v) for v in rdict.values())
 
 @timed
 def build_dataset(words, vocabulary_size=50000):
@@ -139,22 +138,26 @@ class Word2Vec:
 
     assert context_size == len(context_weights)
 
-    self.num_steps = num_steps
-    self.batch_size = batch_size
-    self.embedding_size = embedding_size
-    self.context_size = context_size
+    self.num_steps = int(num_steps)
+    self.batch_size = int(batch_size)
+    self.embedding_size = int(embedding_size)
+    self.context_size = int(context_size)
     self.context_weights = context_weights
-    self.valid_size = valid_size
-    self.valid_window = valid_window
-    self.num_sampled = num_sampled
-    self.vocabulary_size = vocabulary_size
-    self.learning_rate = learning_rate
-    self.learning_decay_steps = learning_decay_steps
-    self.learning_decay = learning_decay
-    self.checkpoint_steps = checkpoint_steps
+    self.valid_size = int(valid_size)
+    self.valid_window = int(valid_window)
+    self.num_sampled = int(num_sampled)
+    self.vocabulary_size = int(vocabulary_size)
+    self.learning_rate = float(learning_rate)
+    self.learning_decay_steps = int(learning_decay_steps)
+    self.learning_decay = float(learning_decay)
+    self.checkpoint_steps = int(checkpoint_steps)
     self.data_dir = data_dir
 
     self.data_index = data_index
+
+    args_pretty_string = json.dumps(self.get_params(), indent=4, sort_keys=True)
+    print("learning word2vec with following parameters:")
+    print(args_pretty_string)
 
     if words != None:
     #remove old logs
@@ -162,7 +165,7 @@ class Word2Vec:
         print('Deleting old files in data dir: %s'%(data_dir))
         tf.gfile.DeleteRecursively(data_dir)
       tf.gfile.MakeDirs(data_dir)
-    # build_dataset  
+    # build_dataset
       (self.data, self.count,
        self.dictionary, self.reverse_dictionary) = build_dataset(words, self.vocabulary_size)
       del words
@@ -201,19 +204,31 @@ class Word2Vec:
   def _init_graph(self):
     self.valid_examples = np.array(random.sample(range(self.valid_window), self.valid_size))
     self.graph = tf.Graph()
-    with self.graph.as_default():
-      # Input data.
-      self.train_dataset = tf.placeholder(tf.int32, shape=[self.batch_size, self.context_size])
-      self.train_labels = tf.placeholder(tf.int32, shape=[self.batch_size, 1])
-      self.valid_dataset = tf.constant(self.valid_examples, dtype=tf.int32)
 
-      # Variables.
-      self.embeddings = tf.Variable(
-        tf.random_uniform([self.vocabulary_size, self.embedding_size],-1.0, 1.0))
-      self.softmax_weights = tf.Variable(
-        tf.truncated_normal([self.vocabulary_size, self.embedding_size],
-                            stddev=1.0 / math.sqrt(self.embedding_size)))
-      self.softmax_biases = tf.Variable(tf.zeros([self.vocabulary_size]))
+    with self.graph.as_default():
+      with tf.name_scope('input_data'):
+        self.train_dataset = tf.placeholder(tf.int32,
+                             shape=[self.batch_size, self.context_size],
+                             name='train_dataset')
+
+        self.train_labels = tf.placeholder(tf.int32,
+                             shape=[self.batch_size, 1],
+                             name='train_labels')
+
+        self.valid_dataset = tf.constant(self.valid_examples, dtype=tf.int32,
+                             name='valid_dataset')
+
+      with tf.name_scope('variables'):
+        self.embeddings = tf.Variable(
+          tf.random_uniform([self.vocabulary_size, self.embedding_size],
+                            -1.0, 1.0),
+                            name='w2v_embeddings')
+        self.softmax_weights = tf.Variable(
+          tf.truncated_normal([self.vocabulary_size, self.embedding_size],
+                            stddev=1.0 / math.sqrt(self.embedding_size)),
+                            name='softmax_weights')
+        self.softmax_biases = tf.Variable(tf.zeros([self.vocabulary_size]),
+                            name='softmax_biases')
 
       # Apply weights to the context words in the training data
       # Idea: Give more weight to words that are closer to the center
@@ -221,7 +236,8 @@ class Word2Vec:
 
       # Model.
       # Look up embeddings for inputs.
-      embed = tf.zeros([self.batch_size, self.embedding_size])
+      embed = tf.zeros([self.batch_size, self.embedding_size],
+               name='embedding_lookup')
       for i in range(self.context_size):
         embed += tf.nn.embedding_lookup(self.embeddings, self.train_dataset[:, i])
       # self.embed = embed / self.context_size
@@ -231,7 +247,8 @@ class Word2Vec:
       self.loss = tf.reduce_mean(
         tf.nn.sampled_softmax_loss(self.softmax_weights, self.softmax_biases,
                                    self.embed, self.train_labels,
-                                   self.num_sampled, self.vocabulary_size))
+                                   self.num_sampled, self.vocabulary_size),
+                                   name="loss_calculation")
       tf.summary.scalar('loss', self.loss)
 
       self.global_step = tf.Variable(0, name="global_step")  # count the number of steps taken
@@ -247,32 +264,38 @@ class Word2Vec:
       # optimizer's `minimize` method will by default modify all variable quantities
       # that contribute to the tensor it is passed.
       # See docs on `tf.train.Optimizer.minimize()` for more details.
-      self.optimizer = tf.train.AdagradOptimizer(self.tf_learning_rate).minimize(self.loss, self.global_step)
+      with tf.name_scope('train'):
+        self.optimizer = tf.train.AdagradOptimizer(self.tf_learning_rate).minimize(self.loss, self.global_step)
 
       # Compute the similarity between minibatch examples and all embeddings.
       # We use the cosine distance:
-      norm = tf.sqrt(tf.reduce_sum(tf.square(self.embeddings), 1, keep_dims=True))
+      with tf.name_scope('normalize'):
+        norm = tf.sqrt(tf.reduce_sum(tf.square(self.embeddings), 1, keep_dims=True))
+        with tf.variable_scope('normalized_embeddings'):
+          self.normalized_embeddings = self.embeddings / norm
 
-      self.normalized_embeddings = self.embeddings / norm
-      self.valid_embeddings = tf.nn.embedding_lookup(self.normalized_embeddings, self.valid_dataset)
+      with tf.name_scope('validation_embeddings'):
+        self.valid_embeddings = tf.nn.embedding_lookup(self.normalized_embeddings, self.valid_dataset)
 
-      self.similarity = tf.matmul(self.valid_embeddings, tf.transpose(self.normalized_embeddings))
+      with tf.name_scope('similarity'):
+        self.similarity = tf.matmul(self.valid_embeddings, tf.transpose(self.normalized_embeddings))
 
-      # create a saver
-      self.saver = tf.train.Saver()
+      with tf.name_scope('save_and_summary'):
+        # create a saver
+        self.saver = tf.train.Saver()
 
-      # create summary writers for tensorboard
-      self.summary_op = tf.summary.merge_all()
-      self.summary_writer = tf.summary.FileWriter(self.data_dir, self.graph)
+        # create summary writers for tensorboard
+        self.summary_op = tf.summary.merge_all()
+        self.summary_writer = tf.summary.FileWriter(self.data_dir, self.graph)
 
-      # Format: tensorflow/contrib/tensorboard/plugins/projector/projector_config.proto
-      projector_config = projector.ProjectorConfig()
-      embedding = projector_config.embeddings.add()
-      embedding.tensor_name = self.embeddings.name
-      embedding.metadata_path = os.path.join(self.data_dir, 'dictionary.vocab')
+        # Format: tensorflow/contrib/tensorboard/plugins/projector/projector_config.proto
+        projector_config = projector.ProjectorConfig()
+        embedding = projector_config.embeddings.add()
+        embedding.tensor_name = self.embeddings.name
+        embedding.metadata_path = os.path.join(self.data_dir, 'dictionary.vocab')
 
-      # Saves a projector_configuration file that TensorBoard will read during startup.
-      projector.visualize_embeddings(self.summary_writer, projector_config)
+        # Saves a projector_configuration file that TensorBoard will read during startup.
+        projector.visualize_embeddings(self.summary_writer, projector_config)
 
       # init op
       self.init_op = tf.global_variables_initializer()
@@ -298,6 +321,7 @@ class Word2Vec:
       if step % 2000 == 0:
         if step > 0:
           average_loss = average_loss / 2000
+          self.summary_writer.add_summary(summary, step)
         # The average loss is an estimate of the loss over the last 2000 batches.
         print('## Average loss at step %d: %f' % (step, average_loss))
         #print('Current learningrate: %f' % (tf.unpack(self.tf_learning_rate)))
@@ -339,7 +363,8 @@ class Word2Vec:
               open(os.path.join(self.data_dir, 'model_params.json'), 'w'))
 
     # This is where tensorboard takes the labels for the embedding visu
-    dictionary_to_vocab_file(self.dictionary ,os.path.join(self.data_dir, 'dictionary.vocab'))
+    rev_dictionary_to_vocab_file(self.reverse_dictionary,
+              os.path.join(self.data_dir, 'dictionary.vocab'))
 
     json.dump(self.dictionary,
               open(os.path.join(self.data_dir, 'model_dict.json'), 'w'))
