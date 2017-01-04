@@ -26,9 +26,12 @@ http://stackoverflow.com/questions/41265035/tensorflow-why-there-are-3-files-aft
 '''
 
 
-def main(load_path=None):
-  if load_path != None:
-    _word2vec = Word2Vec.load(load_path)
+def main(args):
+  args_pretty_string = json.dumps(vars(args), indent=4, sort_keys=True)
+  print("learning word2vec with following parameters:")
+  print(args_pretty_string)
+  if args.load_embeddings == True:
+    _word2vec = Word2Vec.load(args.data_dir)
     _word2vec.evaluate()
   else:
     filename = maybe_download('text8.zip', 31344016)
@@ -116,7 +119,7 @@ def generate_cbow_batch(data, data_index, batch_size, context_size):
 
 class Word2Vec:
   def __init__(self,
-               words,
+               words=None,
                num_steps=1000000, 	# Iterate over n batches
                batch_size=128,
                embedding_size=128, # Dimension of the embedding vector.
@@ -130,18 +133,11 @@ class Word2Vec:
                learning_decay_steps=5000,  # Decay after n steps
                learning_decay=0.999,    # Amount of decay 0.95 -> 5% decay
                checkpoint_steps=10000,	# Save model after n steps
-               save_path='checkpoints/', # Folder to save data in
-               log_path='checkpoints/',	 # Folder to save logs in
+               data_dir='checkpoints/', # Folder to save data in
                data_index = 0
                ):
 
     assert context_size == len(context_weights)
-
-    #remove old logs
-    if tf.gfile.Exists(log_path):
-      print('Deleting old logs in: %s'%(log_path))
-      tf.gfile.DeleteRecursively(log_path)
-    tf.gfile.MakeDirs(log_path)
 
     self.num_steps = num_steps
     self.batch_size = batch_size
@@ -156,19 +152,22 @@ class Word2Vec:
     self.learning_decay_steps = learning_decay_steps
     self.learning_decay = learning_decay
     self.checkpoint_steps = checkpoint_steps
-    self.save_path = save_path
-    self.log_path = log_path
+    self.data_dir = data_dir
 
     self.data_index = data_index
 
-    (self.data, self.count,
-     self.dictionary, self.reverse_dictionary) = build_dataset(words, self.vocabulary_size)
-    del words
-    print('Most common words (+UNK)', self.count[:5])
-    print('Sample data', self.data[:10])
-
-    # This is where tensorboard takes the labels for the embedding visu
-    dictionary_to_vocab_file(self.dictionary ,os.path.join(self.log_path, 'dictionary.vocab'))
+    if words != None:
+    #remove old logs
+      if tf.gfile.Exists(data_dir):
+        print('Deleting old files in data dir: %s'%(data_dir))
+        tf.gfile.DeleteRecursively(data_dir)
+      tf.gfile.MakeDirs(data_dir)
+    # build_dataset  
+      (self.data, self.count,
+       self.dictionary, self.reverse_dictionary) = build_dataset(words, self.vocabulary_size)
+      del words
+      print('Most common words (+UNK)', self.count[:5])
+      print('Sample data', self.data[:10])
 
     self._init_graph()
 
@@ -193,8 +192,7 @@ class Word2Vec:
       'learning_decay_steps' : self.learning_decay_steps,
       'learning_decay' : self.learning_decay,
       'checkpoint_steps' : self.checkpoint_steps,
-      'save_path' : self.save_path,
-      'log_path' : self.log_path,
+      'data_dir' : self.data_dir,
       'data_index' : self.data_index
     }
     return params
@@ -265,13 +263,13 @@ class Word2Vec:
 
       # create summary writers for tensorboard
       self.summary_op = tf.summary.merge_all()
-      self.summary_writer = tf.summary.FileWriter(self.log_path, self.graph)
+      self.summary_writer = tf.summary.FileWriter(self.data_dir, self.graph)
 
       # Format: tensorflow/contrib/tensorboard/plugins/projector/projector_config.proto
       projector_config = projector.ProjectorConfig()
       embedding = projector_config.embeddings.add()
       embedding.tensor_name = self.embeddings.name
-      embedding.metadata_path = os.path.join(self.log_path, 'dictionary.vocab')
+      embedding.metadata_path = os.path.join(self.data_dir, 'dictionary.vocab')
 
       # Saves a projector_configuration file that TensorBoard will read during startup.
       projector.visualize_embeddings(self.summary_writer, projector_config)
@@ -297,11 +295,9 @@ class Word2Vec:
       feed_dict = {self.train_dataset : batch_data, self.train_labels : batch_labels}
       _, l, summary = self.sess.run([self.optimizer, self.loss, self.summary_op], feed_dict=feed_dict)
       average_loss += l
-      if step % 500 == 0:
+      if step % 2000 == 0:
         if step > 0:
           average_loss = average_loss / 2000
-          tf.summary.scalar('average_loss', average_loss)
-          self.summary_writer.add_summary(summary, step)
         # The average loss is an estimate of the loss over the last 2000 batches.
         print('## Average loss at step %d: %f' % (step, average_loss))
         #print('Current learningrate: %f' % (tf.unpack(self.tf_learning_rate)))
@@ -325,58 +321,50 @@ class Word2Vec:
     for i in range(self.valid_size):
       valid_word = self.reverse_dictionary[self.valid_examples[i]]
       nearest = (-sim[i, :]).argsort()[1:top_k+1]
-      log = 'Nearest to %s:' % valid_word
+      log = 'EVAL : Nearest to %s:' % valid_word
       for k in range(top_k):
         close_word = self.reverse_dictionary[nearest[k]]
         log = '%s %s,' % (log, close_word)
       print(log)
 
   @timed
-  def save_model(self, path=None):
-    if path == None:
-      path = self.save_path
+  def save_model(self):
     self.saver.save(self.sess,
-                    os.path.join(path, 'model.ckpt'))
-    print("Model has been saved")
+                    os.path.join(self.data_dir, 'model.ckpt'))
+    print("SAVE : model has been saved")
 
-  #currently not used
-  def save_data_and_labels(self, path=None):
-    if path == None:
-      path = self.save_path
-    json.dump(self.data,
-              open(os.path.join(path, 'data.json'), 'w'))
-    json.dump(self.count,
-              open(os.path.join(path, 'count.json'), 'w'))
-
-  def save_params(self, path=None):
-    if path == None:
-      path = self.save_path
+  def save_params(self):
     params = self.get_params()
     json.dump(params,
-              open(os.path.join(path, 'model_params.json'), 'w'))
-    json.dump(self.dictionary,
-              open(os.path.join(path, 'model_dict.json'), 'w'))
-    json.dump(self.reverse_dictionary,
-              open(os.path.join(path, 'model_rdict.json'), 'w'))
-    print("Params and dictionaries have been saved")
+              open(os.path.join(self.data_dir, 'model_params.json'), 'w'))
 
-  def save_all(self, path=None):
+    # This is where tensorboard takes the labels for the embedding visu
+    dictionary_to_vocab_file(self.dictionary ,os.path.join(self.data_dir, 'dictionary.vocab'))
+
+    json.dump(self.dictionary,
+              open(os.path.join(self.data_dir, 'model_dict.json'), 'w'))
+    json.dump(self.reverse_dictionary,
+              open(os.path.join(self.data_dir, 'model_rdict.json'), 'w'))
+    json.dump(self.data,
+              open(os.path.join(self.data_dir, 'data.json'), 'w'))
+    json.dump(self.count,
+              open(os.path.join(self.data_dir, 'count.json'), 'w'))
+    print("SAVE : params and dictionaries have been saved")
+
+  def save_all(self):
     '''
     To save trained model and its params.
     '''
-    if path == None:
-      path = self.save_path
-
     # save the model (tensorflow)
-    self.save_model(path)
+    self.save_model()
 
     # save parameters of the model
-    self.save_params(path)
+    self.save_params()
 
     # save training data and labels
     # self.save_data_and_labels(path)
 
-    print("Everything got saved in : %s" % self.save_path)
+    print("SAVE : everything got saved in : %s" % self.data_dir)
 
   @classmethod
   def load(cls, path):
@@ -397,6 +385,11 @@ class Word2Vec:
     # convert indices loaded from json back to int since json does not allow int as keys
     word2vec.reverse_dictionary = {int(key):val for key, val in reverse_dictionary.items()}
 
+    word2vec.data = json.load(open(os.path.join(path_dir, 'data.json'), 'r'))
+    word2vec.count = json.load(open(os.path.join(path_dir, 'count.json'), 'r'))
+
+    print("LOAD : everything got loaded from : %s" % path_dir)
+
     return word2vec
 
   def _restore(self, path):
@@ -408,6 +401,21 @@ class Word2Vec:
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='train word2vec network')
-  parser.add_argument('-dir', help='path to folder to load model from', type=str)
+  parser.add_argument('--load_embeddings', dest='load_embeddings', action='store_true')
+  parser.set_defaults(load_embeddings=False)
+  parser.add_argument('--data_dir',              default='checkpoints/',     help='Folder to save and load logs and data (default: %(default)s)')
+  parser.add_argument('--num_steps',             default=1000000,            help='Iterate over N batches (default: %(default)s)')
+  parser.add_argument('--batch_size',            default=128,                help='Number of instances in one batch (default: %(default)s)')
+  parser.add_argument('--embedding_size',        default=128,                help='Dimension of the embedding vector (default: %(default)s)')
+  parser.add_argument('--context_size',          default=8,                  help='How many words to consider left and right (default: %(default)s)')
+  parser.add_argument('--context_weights',       default=[1,2,3,4,4,3,2,1],  help='Weights of the considered words (default: %(default)s)')
+  parser.add_argument('--valid_size',            default=16,                 help='Random set of words to evaluate similarity on (default: %(default)s)')
+  parser.add_argument('--valid_window',          default=100,                help='Only pick dev samples in the head of the distribution (default: %(default)s)')
+  parser.add_argument('--num_sampled',           default=64,                 help='Number of negative examples to sample (default: %(default)s)')
+  parser.add_argument('--vocabulary_size',       default=50000,              help='Use the N most common words (default: %(default)s)')
+  parser.add_argument('--learning_rate',         default=1.0,                help='Learning rate to start with (default: %(default)s)')
+  parser.add_argument('--learning_decay_steps',  default=5000,               help='Decay after N steps (default: %(default)s)')
+  parser.add_argument('--learning_decay',        default=0.999,              help='Amount of decay 0.95 -> 5 percent decay (default: %(default)s)')
+  parser.add_argument('--checkpoint_steps',      default=10000,              help='Save model after n steps (default: %(default)s)')
   args = parser.parse_args()
-  main(load_path=args.l)
+  main(args)
