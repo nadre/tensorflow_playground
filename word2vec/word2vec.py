@@ -133,6 +133,7 @@ class Word2Vec:
                learning_decay=0.999,    # Amount of decay 0.95 -> 5% decay
                checkpoint_steps=10000,	# Save model after n steps
                data_dir='checkpoints/', # Folder to save data in
+               show_device_placement=False,
                data_index = 0
                ):
 
@@ -151,6 +152,7 @@ class Word2Vec:
     self.learning_decay_steps = int(learning_decay_steps)
     self.learning_decay = float(learning_decay)
     self.checkpoint_steps = int(checkpoint_steps)
+    self.show_device_placement = show_device_placement
     self.data_dir = data_dir
 
     self.data_index = data_index
@@ -177,8 +179,9 @@ class Word2Vec:
     # Tells tensorflow not to allocate all the GPU memory there is
     config = tf.ConfigProto()
     config.gpu_options.allow_growth=True
-    config.log_device_placement=True
     config.allow_soft_placement=True
+    if self.show_device_placement:
+      config.log_device_placement=True
 
     self.sess = tf.Session(graph=self.graph, config=config)
 
@@ -430,6 +433,8 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='train word2vec network')
   parser.add_argument('--load_embeddings', dest='load_embeddings', action='store_true')
   parser.set_defaults(load_embeddings=False)
+  parser.add_argument('--show_device_placement', dest='show_device_placement', action='store_true')
+  parser.set_defaults(show_device_placement=False)
   parser.add_argument('--data_dir',              default='checkpoints/',     help='Folder to save and load logs and data (default: %(default)s)')
   parser.add_argument('--num_steps',             default=1000000,            help='Iterate over N batches (default: %(default)s)')
   parser.add_argument('--batch_size',            default=128,                help='Number of instances in one batch (default: %(default)s)')
