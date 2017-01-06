@@ -30,6 +30,7 @@ def main(args):
   if args.load_embeddings == True:
     _word2vec = Word2Vec.load(args.data_dir)
     _word2vec.evaluate()
+    print(_word2vec.get_embeddings(['king', 'male', 'female', 'queen']))
   else:
     args = vars(args)
     del args['load_embeddings']
@@ -201,6 +202,7 @@ class Word2Vec:
       'learning_decay' : self.learning_decay,
       'checkpoint_steps' : self.checkpoint_steps,
       'data_dir' : self.data_dir,
+      'show_device_placement' : self.show_device_placement,
       'data_index' : self.data_index
     }
     return params
@@ -210,7 +212,7 @@ class Word2Vec:
     self.valid_examples = np.array(random.sample(range(self.valid_window), self.valid_size))
     self.graph = tf.Graph()
 
-    with self.graph.as_default(), tf.device('/gpu:0'):
+    with self.graph.as_default():
       with tf.name_scope('input_data'):
         self.train_dataset = tf.placeholder(tf.int32,
                              shape=[self.batch_size, self.context_size],
@@ -355,6 +357,14 @@ class Word2Vec:
         close_word = self.reverse_dictionary[nearest[k]]
         log = '%s %s,' % (log, close_word)
       print(log)
+
+  def get_embeddings(self, words):
+    try:
+      idxs = [ self.dictionary[word] for w in words ]
+    except KeyError:
+      raise KeyError('word "{}" not in dictionary'.format(word))
+    else:
+      return self.final_embeddings[idxs]
 
   @timed
   def save_model(self):
